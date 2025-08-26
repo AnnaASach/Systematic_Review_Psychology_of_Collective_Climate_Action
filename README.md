@@ -1,1 +1,3 @@
-# Systematic_Review_Psychology_of_Collective_Climate_Action
+# Systematic Review Psychology of Collective Climate Action
+
+Here the R code for the data analysis and data visualization. 
