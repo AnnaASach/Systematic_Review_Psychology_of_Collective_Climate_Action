@@ -1,0 +1,287 @@
+---
+title: "World Map: Samples of included studies"
+subtitle: "Multiple countries per study possible"
+author: "A.A.S."
+date: today
+format:
+  html:
+    theme:
+      light: flatly
+      dark:  darkly
+    fontsize: .9em
+    page-layout: full
+    toc: true
+    toc-depth: 4
+    toc-location: left
+    toc-title: Contents
+    toc_float:
+       collapsed: false
+    number-sections: false
+    number-depth: 4
+    grid:
+      sidebar-width: 150px
+      body-width: 1500px
+      margin-width: 50px
+      gutter-width: 1.5rem
+    smooth-scroll: true
+    highlight-style: github
+    date-format: "D MMMM YYYY"
+    code-fold: false
+    code-summary: "Show the code"
+    code-overflow: wrap
+    code-tools: true
+execute:
+  echo: true
+  warning: false
+  output: true
+  error: false
+embed-resources: true
+fig-responsive: false
+standalone: true
+editor: 
+  markdown: 
+    wrap: sentence
+---
+# Set up and load data
+```{r}
+#| label: set_up
+#| output: false
+#| code-fold: true
+
+# We want to set the working directory to our folder automatically.
+
+rm(list = ls(all = TRUE)) # Clear environment
+
+#check working directory (should be project folder)
+getwd()
+
+# Load packages
+list_of_packages <- c(
+  "quarto",           # to run Quarto file
+  "knitr",            # to run Quarto file
+  "rmarkdown",        # to run Quarto file
+  "maps",             # for maps
+  "countrycode",      # for maps
+  "tidyverse",
+  "dplyr",
+  "readxl", 
+  "mapproj",  # For Gall-Peters projection
+  "paletteer", # to create continuous color scale
+  "ggthemes"  # also needed for color scale in combination with paletteer
+)
+
+new_packages <-
+  list_of_packages[!(list_of_packages %in% installed.packages()[, "Package"])]
+if (length(new_packages))
+  # Install any new packages
+  install.packages(new_packages)
+# Library in all packages
+lapply(list_of_packages, require, character.only = TRUE)
+
+# Clean workspace
+rm(list_of_packages, new_packages)
+
+require(viridis)
+theme_set(
+  theme_void()
+  )
+
+# import data
+data <- read_excel("data.xlsx", 
+    sheet = "Data")
+View(data)
+
+# filter only included paper 
+
+excluded <- filter(data, Include==0)
+
+View(excluded)
+nrow(excluded)
+
+table(excluded$"Reason to exclude")
+
+# filter only included paper 
+
+clean_data <- filter(data, Include == 1)
+
+View(clean_data)
+
+# Sanity check. Should be 230.
+
+nrow(clean_data)
+
+rm(data, excluded)
+
+# create world map coordinates
+world_coordinates <- map_data("world")
+
+# create dataframe
+map_df <- data.frame(clean_data$`Country (of participants)`) 
+
+
+map_df <- map_df %>% 
+  rename(countries = "clean_data..Country..of.participants..")
+
+View(map_df)
+
+ls(map_df)
+
+map_df_clean <- map_df %>%
+  mutate(countries = case_when(
+    str_detect(countries, "Congo, Republic of the") ~ "Republic of Congo",
+    str_detect(countries, "Korea South") ~ "South Korea",
+    is.na(countries) | countries == "" ~ "Does not say!", # one paper which doesn't specify where participants were from
+    TRUE ~ countries
+  ))
+
+View(map_df_clean)
+
+# Step 1: Split multi-country strings and unnest into rows
+country_mentions <- map_df_clean %>%
+  separate_rows(countries, sep = ",\\s*") %>%
+  filter(countries != "") %>%
+  mutate(countries = str_trim(countries)) # remove any extra whitespace
+
+# Sanity check
+
+View(country_mentions)
+nrow(country_mentions)
+
+# Step 2: Count how many times each country is mentioned
+country_counts <- country_mentions %>%
+  count(countries, sort = TRUE) %>%
+  rename(country = countries, frequency = n)
+
+# Step 3: Prepare map data
+world_map <- map_data("world") %>%
+  mutate(country = region)
+
+# Standardize country names to improve joins
+country_counts$country_standard <- countrycode(country_counts$country, "country.name", "country.name")
+
+View(country_counts)
+```
+
+# List of frequencies
+```{r}
+#| label: do_list
+#| output: true
+#| code-fold: true
+# create table with country name and frequency
+
+twocolumns <- select(country_counts,1:2)
+
+knitr::kable(twocolumns)
+
+```
+
+# Merge counts with map
+```{r}
+#| label: prepare_map
+#| output: true
+#| code-fold: true
+# create map
+
+world_map$country_standard <- countrycode(world_map$country, "country.name", "country.name")
+
+View(world_map)
+
+# Step 4: Join counts to the map
+map_with_counts <- world_map %>%
+  left_join(country_counts, by = "country_standard", relationship = "many-to-many")
+
+View(map_with_counts)
+
+```
+
+# create map
+```{r}
+#| label: do_map
+#| output: true
+#| code-fold: true
+
+blue_palette <- paletteer::paletteer_c("ggthemes::Blue", 17)
+
+# Step 5: Plot the map
+clearer <- map_with_counts %>%
+  mutate(text = paste("Country: ", country_standard, "\nStudies (n): ", frequency, sep="")) %>%
+  ggplot(aes(x = long, y = lat, group = group, fill = factor(frequency), text = text)) +
+  geom_polygon(linewidth=0.005, alpha=0.9) +
+  theme_void() +
+  scale_fill_manual(
+      values = blue_palette,
+      na.value = "#f0f0f0", 
+      name="Number of studies",
+      breaks = seq(85),
+      guide = guide_legend(keyheight = unit(3, units = "mm"),
+      keywidth=unit(10, units = "mm"), 
+      label.position = "bottom", 
+      title.position = 'top', 
+      nrow=1)) +
+  labs(title = "") +
+  theme(legend.position = c(0.51, 0.09),
+        plot.title = element_text(hjust = 0.5)) +
+  coord_fixed(1.3); clearer
+
+```
+
+# Interactive map
+```{r}
+#| label: interactive_map
+#| output: true
+#| code-fold: true
+
+plotly::ggplotly(clearer)
+
+ggsave("map.jpeg", dpi = 700, width = 10, height = 6, units = "in")
+```
+# Information About the R Session
+
+```{r}
+
+sessionInfo()
+
+# R version 4.3.2 (2023-10-31 ucrt)
+# Platform: x86_64-w64-mingw32/x64 (64-bit)
+# Running under: Windows 11 x64 (build 22631)
+# 
+# Matrix products: default
+# 
+# 
+# locale:
+# [1] LC_COLLATE=Dutch_Netherlands.utf8  LC_CTYPE=Dutch_Netherlands.utf8    LC_MONETARY=Dutch_Netherlands.utf8
+# [4] LC_NUMERIC=C                       LC_TIME=Dutch_Netherlands.utf8    
+# 
+# time zone: Europe/Amsterdam
+# tzcode source: internal
+# 
+# attached base packages:
+# [1] stats     graphics  grDevices datasets  utils     methods   base     
+# 
+# other attached packages:
+#  [1] paletteer_1.6.0   viridis_0.6.5     viridisLite_0.4.2 mapproj_1.2.11    readxl_1.4.3      lubridate_1.9.3   forcats_1.0.0    
+#  [8] stringr_1.5.1     dplyr_1.1.4       purrr_1.0.2       readr_2.1.5       tidyr_1.3.1       tibble_3.2.1      ggplot2_3.5.1    
+# [15] tidyverse_2.0.0   countrycode_1.6.1 maps_3.4.2.1      rmarkdown_2.28    knitr_1.48        quarto_1.4.4     
+# 
+# loaded via a namespace (and not attached):
+#  [1] mnormt_2.1.1          gridExtra_2.3         rematch2_2.1.2        rlang_1.1.5           magrittr_2.0.3       
+#  [6] furrr_0.3.1           compiler_4.3.2        systemfonts_1.1.0     vctrs_0.6.5           pkgconfig_2.0.3      
+# [11] crayon_1.5.3          fastmap_1.2.0         backports_1.5.0       labeling_0.4.3        pander_0.6.5         
+# [16] qualtRics_3.2.1       tzdb_0.4.0            ps_1.8.0              ragg_1.3.3            xfun_0.48            
+# [21] jsonlite_1.8.9        later_1.4.1           tidyLPA_1.1.0         psych_2.4.12          broom_1.0.8          
+# [26] parallel_4.3.2        R6_2.5.1              stringi_1.8.4         RColorBrewer_1.1-3    parallelly_1.43.0    
+# [31] boot_1.3-28.1         cellranger_1.1.0      Rcpp_1.0.13-1         splines_4.3.2         timechange_0.3.0     
+# [36] tidyselect_1.2.1      rstudioapi_0.17.1     yaml_2.3.10           codetools_0.2-19      sjlabelled_1.2.0     
+# [41] processx_3.8.4        listenv_0.9.1         lattice_0.22-5        plyr_1.8.9            withr_3.0.2          
+# [46] coda_0.19-4           evaluate_1.0.1        future_1.40.0         fastDummies_1.7.5     mclust_6.1.1         
+# [51] texreg_1.39.4         jtools_2.3.0          pillar_1.10.1         checkmate_2.3.2       insight_1.1.0        
+# [56] plotly_4.10.4         generics_0.1.3        hms_1.1.3             munsell_0.5.0         scales_1.3.0         
+# [61] globals_0.17.0        xtable_1.8-4          glue_1.8.0            lazyeval_0.2.2        tools_4.3.2          
+# [66] data.table_1.16.2     gsubfn_0.7            grid_4.3.2            MplusAutomation_1.1.1 crosstalk_1.2.1      
+# [71] colorspace_2.1-0      nlme_3.1-164          performance_0.13.0    proto_1.0.0           cli_3.6.2            
+# [76] textshaping_0.4.0     ggthemes_5.1.0        gtable_0.3.4          broom.mixed_0.2.9.6   digest_0.6.37        
+# [81] prismatic_1.1.2       htmlwidgets_1.6.4     farver_2.1.1          htmltools_0.5.8.1     lifecycle_1.0.4      
+# [86] httr_1.4.7          
+# 
+
+```
